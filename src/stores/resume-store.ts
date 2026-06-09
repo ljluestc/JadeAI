@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { Resume, ResumeSection, SectionContent } from '@/types/resume';
 import { AUTOSAVE_DELAY } from '@/lib/constants';
-import { generateId } from '@/lib/utils';
+import { normalizeSectionContentForLists } from '@/lib/resume/section-content-normalization';
 import { useSettingsStore } from '@/stores/settings-store';
 
 interface ResumeStore {
@@ -37,25 +37,11 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
     const { _saveTimeout } = get();
     if (_saveTimeout) clearTimeout(_saveTimeout);
 
-    // Normalize: ensure all items/categories in section content have id fields
-    const sections = (resume.sections || []).map((s) => {
-      const content = s.content as unknown as Record<string, unknown>;
-      if (Array.isArray(content?.items)) {
-        content.items = (content.items as any[]).map((item) =>
-          typeof item === 'object' && item !== null && !item.id
-            ? { ...item, id: generateId() }
-            : item
-        );
-      }
-      if (Array.isArray(content?.categories)) {
-        content.categories = (content.categories as any[]).map((cat) =>
-          typeof cat === 'object' && cat !== null && !cat.id
-            ? { ...cat, id: generateId() }
-            : cat
-        );
-      }
-      return { ...s, content: content as unknown as typeof s.content };
-    });
+    // Normalize list fields to prevent malformed persisted data (e.g., stringified arrays) from crashing UI renders
+    const sections = (resume.sections || []).map((s) => ({
+      ...s,
+      content: normalizeSectionContentForLists(s.type, s.content) as unknown as typeof s.content,
+    }));
 
     set({
       currentResume: { ...resume, sections },

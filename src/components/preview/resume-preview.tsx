@@ -3,6 +3,7 @@
 import { useId } from 'react';
 import type { Resume, ThemeConfig } from '@/types/resume';
 import { BACKGROUND_TEMPLATES } from '@/lib/constants';
+import { normalizeSectionContentForLists } from '@/lib/resume/section-content-normalization';
 import { ClassicTemplate } from './templates/classic';
 import { ModernTemplate } from './templates/modern';
 import { MinimalTemplate } from './templates/minimal';
@@ -241,8 +242,14 @@ export function ResumePreview({ resume }: ResumePreviewProps) {
   const scopeId = useId();
   const theme: ThemeConfig = { ...DEFAULT_THEME, ...(resume.themeConfig || {}) };
 
-  // Defensive: ensure resume.sections is always an array (AI may return invalid/empty data)
-  const safeResume = resume.sections ? resume : { ...resume, sections: [] };
+  // Defensive: ensure resume.sections/list fields are always safely normalized for rendering
+  const safeSections = Array.isArray(resume.sections)
+    ? resume.sections.map((section) => ({
+      ...section,
+      content: normalizeSectionContentForLists(section.type, section.content) as typeof section.content,
+    }))
+    : [];
+  const safeResume: Resume = { ...resume, sections: safeSections };
 
   return (
     <>

@@ -4,6 +4,7 @@ import { resumeRepository } from '@/lib/db/repositories/resume.repository';
 import { getModel, getJsonProviderOptions, type AIConfig } from '@/lib/ai/provider';
 import { jdAnalysisOutputSchema } from '@/lib/ai/jd-analysis-schema';
 import { extractJson } from '@/lib/ai/extract-json';
+import { coerceListFieldValue, ensureArrayItemsHaveId, getSectionListField, parseValueAsJsonIfPossible } from '@/lib/resume/section-content-normalization';
 
 export function createExecutableTools(resumeId: string, aiConfig: AIConfig) {
   return {
@@ -32,30 +33,31 @@ Use field="items" or field="categories" to update list sections. Each item MUST 
         const section = resume.sections.find((s: any) => s.id === sectionId);
         if (!section) return { success: false, error: 'Section not found' };
 
-        let parsedValue: unknown = value;
-        try {
-          parsedValue = JSON.parse(value);
-        } catch {
-          // Use as string if not valid JSON
-        }
+        let parsedValue: unknown = parseValueAsJsonIfPossible(value);
+        const expectedListField = getSectionListField(section.type);
 
         // Fix field name for item-based sections when AI uses wrong field
-        const itemSections = ['work_experience', 'education', 'projects', 'certifications', 'languages', 'github', 'custom'];
         let actualField = field;
-        if (itemSections.includes(section.type) && field !== 'items') {
+        if (expectedListField === 'items' && field !== 'items') {
           // AI sent wrong field (e.g. "text") for an items-based section — convert to items
           if (typeof parsedValue === 'string') {
             // Convert plain text to a single custom item
             parsedValue = [{ id: crypto.randomUUID(), title: '', description: parsedValue }];
           } else if (!Array.isArray(parsedValue)) {
-            // If it's an object with items inside, extract them
-            if (Array.isArray((parsedValue as any)?.items)) {
-              parsedValue = (parsedValue as any).items;
+            const extractedItems = coerceListFieldValue(parsedValue, 'items');
+            if (extractedItems) {
+              parsedValue = extractedItems;
             }
           }
-          actualField = section.type === 'skills' ? 'categories' : 'items';
+          actualField = 'items';
         }
-        if (section.type === 'skills' && field !== 'categories') {
+        if (expectedListField === 'categories' && field !== 'categories') {
+          if (!Array.isArray(parsedValue)) {
+            const extractedCategories = coerceListFieldValue(parsedValue, 'categories');
+            if (extractedCategories) {
+              parsedValue = extractedCategories;
+            }
+          }
           actualField = 'categories';
         }
 
@@ -64,13 +66,15 @@ Use field="items" or field="categories" to update list sections. Each item MUST 
           return { success: false, error: `Invalid value: ${actualField} cannot be null or undefined` };
         }
 
-        // Ensure items/categories always have id fields
-        if (Array.isArray(parsedValue)) {
-          parsedValue = (parsedValue as any[]).map((item) =>
-            typeof item === 'object' && item !== null && !item.id
-              ? { ...item, id: crypto.randomUUID() }
-              : item
-          );
+        // For list-based sections, only arrays are valid values (supports decoding double-encoded JSON arrays)
+        if (expectedListField && actualField === expectedListField) {
+          const normalizedList = coerceListFieldValue(parsedValue, expectedListField);
+          if (!normalizedList) {
+            return { success: false, error: `Invalid value: ${expectedListField} must be an array` };
+          }
+          parsedValue = ensureArrayItemsHaveId(normalizedList);
+        } else if (Array.isArray(parsedValue)) {
+          parsedValue = ensureArrayItemsHaveId(parsedValue);
         }
 
         // GitHub sections: protect read-only fields for existing items, auto-fetch for new items
